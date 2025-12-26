@@ -23,7 +23,7 @@ jobs:
       #   uses: ilammy/setup-nasm@v1.2.1
       - name: Install dependencies
         run: |
-          dnf install -y git make gcc-c++ gzip which clang cmake
+          dnf install -y git make gcc-c++ gzip which clang cmake zlib-devel openssl-devel
           ln -s /usr/bin/clang /usr/bin/clang-18
           ln -s /usr/bin/clang++ /usr/bin/clang++-18
           /usr/lib64/libc.so.6

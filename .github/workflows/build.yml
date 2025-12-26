@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         # os: [windows-latest, macos-15, ubuntu-20.04]
-        os: [ubuntu-20.04]
+        node-version: [22, 24, 25]
     steps:
       # - name: Setup Windows
       #   if: matrix.os == 'windows-latest'
@@ -22,11 +22,14 @@ jobs:
       #   if: matrix.os == 'windows-latest'
       #   uses: ilammy/setup-nasm@v1.2.1
       - name: Install dependencies
-        run: dnf install -y git make gcc-c++ tar gzip python3 which
+        run: |
+          dnf install -y git make gcc-c++ tar gzip python3 which clang
+          ln -s /usr/bin/clang /usr/bin/clang-18
+          ln -s /usr/bin/clang++ /usr/bin/clang++-18
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ matrix.node-version }}
       - name: Update binaries
         run: |
           git clone --recursive https://github.com/uNetworking/uWebSockets.js.git

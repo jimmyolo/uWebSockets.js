@@ -1,11 +1,16 @@
 name: Build
 on:
   push:
-    branches: [ master ]
+    branches: [ master, glic-2.34 ]
   pull_request:
     branches:
       - master
   workflow_dispatch:
+
+
+permissions:
+  contents: write
+  packages: write
 
 jobs:
   build:
@@ -64,34 +69,24 @@ jobs:
           # git commit -a -m "[GitHub Actions] Updated ${{ matrix.os }} binaries" || true
           # git push "https://unetworkingab:${{ secrets.SECRET }}@github.com/uNetworking/uWebSockets.js" binaries
 
-      - name: Publish to alma9-binaries branch
-        # Only run on push/dispatch to master to avoid PRs overwriting binaries
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+      - name: Publish to GitHub Packages
+        if: github.event_name != 'pull_request'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config --global user.email "victor0801@gmail.com"
-          git config --global user.name "jimmyolo"
-          
-          # Stash the built artifacts so we can switch branches
-          mkdir -p /tmp/dist
-          cp dist/*.node /tmp/dist/
-          cp dist/*.js /tmp/dist/
-          
-          # Fetch and checkout binaries branch, or create orphan if missing
-          git fetch origin alma9-binaries || true
-          if git rev-parse --verify origin/alma9-binaries >/dev/null 2>&1; then
-            git checkout alma9-binaries
-          else
-            git checkout --orphan alma9-binaries
-            git rm -rf .
-          fi
+          # Prepare package directory
+          mkdir -p npm-package
+          cp dist/*.node npm-package/
+          cp dist/*.js npm-package/
+          cp package.json npm-package/
 
-          cp /tmp/dist/*.node .
-          cp /tmp/dist/*.js .
+          git checkout master docs/index.d.ts
+          cp docs/index.d.ts npm-package/
 
-          git checkout ${{ github.sha }} -- docs/index.d.ts
-          mv docs/index.d.ts .
-          rm -rf docs
+          cd npm-package
+          # Setup .npmrc for GitHub Packages
+          echo "@jimmyolo:registry=https://npm.pkg.github.com" > .npmrc
+          echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> .npmrc
 
-          git add *.node *.js index.d.ts
-          git commit -m "[GitHub Actions] Updated binaries"
-          git push origin alma9-binaries
+          # Publish
+          npm publish

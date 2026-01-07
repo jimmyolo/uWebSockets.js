@@ -80,6 +80,9 @@ jobs:
           cp dist/*.js npm-package/
           cp package.json npm-package/
 
+          
+          # Fix dubious ownership error in container
+          git config --global --add safe.directory '*'
           git checkout master docs/index.d.ts
           cp docs/index.d.ts npm-package/
 

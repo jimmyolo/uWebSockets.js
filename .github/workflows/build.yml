@@ -13,17 +13,16 @@ jobs:
     container: almalinux:9
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
         # os: [windows-latest, macos-15, ubuntu-20.04]
-        node-version: [22, 24, 25]
+        os: [ubuntu-latest]
     steps:
-      # - name: Setup Windows
-      #   if: matrix.os == 'windows-latest'
-      #   uses: ilammy/msvc-dev-cmd@v1
-      # - name: Setup NASM for Windows
-      #   if: matrix.os == 'windows-latest'
-      #   uses: ilammy/setup-nasm@v1.2.1
+      - name: Setup Windows
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Setup NASM for Windows
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/setup-nasm@v1.2.1
       - name: Install dependencies
         run: |
           dnf install -y git make gcc-c++ gzip which clang cmake zlib-devel openssl-devel
@@ -39,21 +38,36 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 22
 
       - name: Build binaries
         run: |
+          # git clone --recursive https://github.com/uNetworking/uWebSockets.js.git
+          # cd uWebSockets.js
+
           # No clones, we build what we checked out
           ${{ matrix.os == 'windows-latest' && 'nmake' || 'make' }}
           ls dist
           cd tests && npm install ws && node smoke.js && cd ..
           ls dist
 
-      - name: Publish to binaries branch
+          # git fetch origin binaries:binaries
+          # git checkout binaries
+          # cp dist/*.node .
+          # cp dist/*.js .
+          # git rev-parse master > source_commit
+          # ls
+          # ${{ matrix.os != 'windows-latest' && 'git checkout master docs/index.d.ts && mv docs/index.d.ts .' || '' }}
+          # git status
+          # git config --global user.email "alexhultman@gmail.com"
+          # git config --global user.name "Alex Hultman"
+          # git commit -a -m "[GitHub Actions] Updated ${{ matrix.os }} binaries" || true
+          # git push "https://unetworkingab:${{ secrets.SECRET }}@github.com/uNetworking/uWebSockets.js" binaries
+
+      - name: Publish to alma9-binaries branch
         # Only run on push/dispatch to master to avoid PRs overwriting binaries
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
         run: |
-          # Configure Git
           git config --global user.email "victor0801@gmail.com"
           git config --global user.name "jimmyolo"
           
@@ -63,34 +77,21 @@ jobs:
           cp dist/*.js /tmp/dist/
           
           # Fetch and checkout binaries branch, or create orphan if missing
-          git fetch origin binaries || true
-          if git rev-parse --verify origin/binaries >/dev/null 2>&1; then
-            git checkout binaries
+          git fetch origin alma9-binaries || true
+          if git rev-parse --verify origin/alma9-binaries >/dev/null 2>&1; then
+            git checkout alma9-binaries
           else
-            git checkout --orphan binaries
+            git checkout --orphan alma9-binaries
             git rm -rf .
           fi
-          
-          # Copy artifacts back
+
           cp /tmp/dist/*.node .
           cp /tmp/dist/*.js .
-          
-          # Copy definition file if on Linux (assuming this runs on Linux)
-          if [ -d "docs" ]; then
-             cp docs/index.d.ts . || true
-          else
-             # If we are on binaries branch, docs folder might be gone, but we should have it from master
-             # Actually, we switched branches. Let's just grab index.d.ts from the checkout before switching?
-             # Easier: checkout master just for that file if needed, or better, copy it to /tmp/dist in the build step
-             true
-          fi
-          
-          # We need index.d.ts. Let's grab it from the source commit we built
+
           git checkout ${{ github.sha }} -- docs/index.d.ts
           mv docs/index.d.ts .
           rm -rf docs
 
-          # Commit and Push
           git add *.node *.js index.d.ts
-          git commit -m "[GitHub Actions] Updated binaries for ${{ matrix.node-version }}" || echo "No changes to commit"
-          git push origin binaries
+          git commit -m "[GitHub Actions] Updated binaries"
+          git push origin alma9-binaries

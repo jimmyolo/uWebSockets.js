@@ -69,22 +69,59 @@ jobs:
           # git commit -a -m "[GitHub Actions] Updated ${{ matrix.os }} binaries" || true
           # git push "https://unetworkingab:${{ secrets.SECRET }}@github.com/uNetworking/uWebSockets.js" binaries
 
-      - name: Publish to GitHub Packages
+      - name: Publish to alma9-binaries branch
         if: github.event_name != 'pull_request'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Prepare package directory
-          mkdir -p npm-package
-          cp dist/*.node npm-package/
-          cp dist/*.js npm-package/
-          cp package.json npm-package/
-          cp docs/index.d.ts npm-package/
+          git config --global user.email "victor0801@gmail.com"
+          git config --global user.name "jimmyolo"
+          
+          # Fix git safe directory
+          git config --global --add safe.directory '*'
 
-          ls npm-package
+          # Stash artifacts
+          mkdir -p /tmp/dist
+          cp dist/*.node /tmp/dist/
+          cp dist/*.js /tmp/dist/
+          cp package.json /tmp/dist/
+          cp docs/index.d.ts /tmp/dist/
 
-          cd npm-package
-          echo "@jimmyolo:registry=https://npm.pkg.github.com" > .npmrc
-          echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> .npmrc
+          ls /tmp/dist
+          
+          # Fetch/Checkout target branch
+          git fetch origin alma9-binaries || true
+          if git rev-parse --verify origin/alma9-binaries >/dev/null 2>&1; then
+            git checkout alma9-binaries
+          else
+            git checkout --orphan alma9-binaries
+            git rm -rf .
+          fi
 
-          npm publish
+          # Restore artifacts
+          cp /tmp/dist/*.node .
+          cp /tmp/dist/*.js .
+          cp /tmp/dist/package.json .
+          cp /tmp/dist/index.d.ts .
+
+          # Commit
+          git add *.node *.js package.json index.d.ts
+          git commit -m "[GitHub Actions] Updated binaries"
+          git push origin alma9-binaries
+
+          # Tagging
+          VERSION=$(node -p "require('./package.json').version")
+          if [ -n "$VERSION" ]; then
+            git tag -f "v${VERSION}"
+            git push -f origin "v${VERSION}"
+          fi
+
+      # - name: Publish to GitHub Packages (required token)
+      #   if: github.event_name != 'pull_request'
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   run: |
+      #     # Prepare package directory
+      #     mkdir -p npm-package
+      #     cp dist/*.node npm-package/
+      #     cp dist/*.js npm-package/
+      #     cp package.json npm-package/
+      #     cp docs/index.d.ts npm-package/

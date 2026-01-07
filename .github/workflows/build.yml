@@ -79,17 +79,12 @@ jobs:
           cp dist/*.node npm-package/
           cp dist/*.js npm-package/
           cp package.json npm-package/
-
-          
-          # Fix dubious ownership error in container
-          git config --global --add safe.directory '*'
-          git checkout master docs/index.d.ts
           cp docs/index.d.ts npm-package/
 
+          ls npm-package
+
           cd npm-package
-          # Setup .npmrc for GitHub Packages
           echo "@jimmyolo:registry=https://npm.pkg.github.com" > .npmrc
           echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> .npmrc
 
-          # Publish
           npm publish

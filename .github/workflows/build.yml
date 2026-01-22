@@ -2,6 +2,7 @@ name: Build
 on:
   push:
     branches: [ master, glic-2.34 ]
+    tags: ['*']
   pull_request:
     branches:
       - master
@@ -70,7 +71,7 @@ jobs:
           # git push "https://unetworkingab:${{ secrets.SECRET }}@github.com/uNetworking/uWebSockets.js" binaries
 
       - name: Publish to alma9-binaries branch
-        if: github.event_name != 'pull_request'
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           git config --global user.email "victor0801@gmail.com"
           git config --global user.name "jimmyolo"
@@ -88,6 +89,7 @@ jobs:
           ls /tmp/dist
           
           # Fetch/Checkout target branch
+          git reset --hard
           git fetch origin alma9-binaries || true
           if git rev-parse --verify origin/alma9-binaries >/dev/null 2>&1; then
             git checkout alma9-binaries

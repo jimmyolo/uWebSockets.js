@@ -1,42 +1,115 @@
 name: Build
 on:
   push:
-    branches: [ master ]
+    branches: [ master, alma9 ]
+    tags: ['*']
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    container: ${{ contains(matrix.os, 'ubuntu') && 'almalinux:9' || null }}
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
     steps:
+      - name: Install dependencies (AlmaLinux)
+        if: contains(matrix.os, 'ubuntu')
+        run: |
+          dnf install -y git make gcc-c++ gzip which clang cmake zlib-devel openssl-devel
+          ln -s /usr/bin/clang /usr/bin/clang-18
+          ln -s /usr/bin/clang++ /usr/bin/clang++-18
+          /usr/lib64/libc.so.6
+
+      - name: Checkout Source
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
       - name: Setup Windows
         if: matrix.os == 'windows-latest'
         uses: ilammy/msvc-dev-cmd@v1
       - name: Setup NASM for Windows
         if: matrix.os == 'windows-latest'
         uses: ilammy/setup-nasm@v1.2.1
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 25
-      - name: Update binaries
+          node-version: 22
+
+      - name: Build binaries
         run: |
-          git clone --recursive https://github.com/uNetworking/uWebSockets.js.git
-          cd uWebSockets.js
           ${{ matrix.os == 'windows-latest' && 'nmake' || 'make' }}
           ls dist
           cd tests && npm install ws && node smoke.js && cd ..
           ls dist
-          git fetch origin binaries:binaries
-          git checkout binaries
-          cp dist/*.node .
-          cp dist/*.js .
-          git rev-parse master > source_commit
-          ls
-          ${{ matrix.os != 'windows-latest' && 'git checkout master docs/index.d.ts && mv docs/index.d.ts .' || '' }}
-          git status
-          git config --global user.email "alexhultman@gmail.com"
-          git config --global user.name "Alex Hultman"
-          git commit -a -m "[GitHub Actions] Updated ${{ matrix.os }} binaries" || true
-          git push "https://unetworkingab:${{ secrets.SECRET }}@github.com/uNetworking/uWebSockets.js" binaries
+
+      - name: Publish to alma9-binaries branch
+        if: github.event_name == 'push' || startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          git config --global user.email "victor0801@gmail.com"
+          git config --global user.name "jimmyolo"
+          git config --global --add safe.directory '*'
+
+          TEMP_DIR=$(mktemp -d)
+          cp dist/*.node "$TEMP_DIR/" 2>/dev/null || true
+          cp dist/uws.js "$TEMP_DIR/" 2>/dev/null || true
+          if [ -f package.json ]; then cp package.json "$TEMP_DIR/"; fi
+          if [ -f docs/index.d.ts ]; then cp docs/index.d.ts "$TEMP_DIR/"; fi
+
+          echo "Artifacts to publish:"
+          ls -la "$TEMP_DIR"
+
+          # Checkout target branch (preserving commit history)
+          git fetch origin alma9-binaries || git fetch origin
+
+          if git rev-parse --verify origin/alma9-binaries >/dev/null 2>&1; then
+            # Branch exists: force checkout to discard working dir changes, then pull to preserve history
+            git checkout -f alma9-binaries
+            git pull --rebase origin alma9-binaries || true
+          else
+            git checkout --orphan alma9-binaries
+            git rm -rf . 2>/dev/null || true
+          fi
+
+          # Copy only necessary files
+          cp "$TEMP_DIR"/*.node . 2>/dev/null || true
+          cp "$TEMP_DIR"/uws.js . 2>/dev/null || true
+          if [ -f "$TEMP_DIR/package.json" ]; then cp "$TEMP_DIR/package.json" .; fi
+          if [ -f "$TEMP_DIR/index.d.ts" ]; then cp "$TEMP_DIR/index.d.ts" .; fi
+
+          git add *.node uws.js 2>/dev/null || true
+          if [ -f package.json ]; then git add package.json; fi
+          if [ -f index.d.ts ]; then git add index.d.ts; fi
+
+          git commit -m "[GitHub Actions] Updated ${{ matrix.os }} binaries" || exit 0
+
+          # Push with retry for concurrent updates
+          for i in {1..5}; do
+            if git push origin alma9-binaries; then
+              echo "Push succeeded"
+              break
+            else
+              echo "Push failed, attempt $i/5, pulling and retrying..."
+              git pull --rebase origin alma9-binaries || true
+              sleep $((i * 2))
+            fi
+          done
+
+          # Tagging (only on tag events)
+          if [[ "${{ github.ref }}" == refs/tags/* ]] && [ -f package.json ]; then
+            VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "")
+            if [ -n "$VERSION" ]; then
+              git tag -f "v${VERSION}-${{ matrix.os }}"
+              git push -f origin "v${VERSION}-${{ matrix.os }}"
+            fi
+          fi

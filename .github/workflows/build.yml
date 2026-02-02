@@ -91,7 +91,14 @@ jobs:
           if [ -f package.json ]; then git add package.json; fi
           if [ -f index.d.ts ]; then git add index.d.ts; fi
 
-          git commit -m "[GitHub Actions] Updated ${{ matrix.os }} binaries" || exit 0
+          # Read version from package.json
+          VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "")
+          COMMIT_MSG="[GitHub Actions] Updated ${{ matrix.os }} binaries"
+          if [ -n "$VERSION" ]; then
+            COMMIT_MSG="[GitHub Actions] Updated ${{ matrix.os }} binaries ($VERSION)"
+          fi
+          
+          git commit -m "$COMMIT_MSG" || exit 0
 
           # Push with retry for concurrent updates
           for i in {1..5}; do
@@ -105,11 +112,13 @@ jobs:
             fi
           done
 
-          # Tagging (only on tag events)
-          if [[ "${{ github.ref }}" == refs/tags/* ]] && [ -f package.json ]; then
+          # Create version tag for npm installation
+          #   e.g. npm install jimmyolo/uWebSockets.js#v20.57.0
+          if [ -f package.json ]; then
             VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "")
             if [ -n "$VERSION" ]; then
-              git tag -f "v${VERSION}-${{ matrix.os }}"
-              git push -f origin "v${VERSION}-${{ matrix.os }}"
+              echo "Creating tag v${VERSION} for npm installation"
+              git tag -f "v${VERSION}"
+              git push -f origin "v${VERSION}"
             fi
           fi

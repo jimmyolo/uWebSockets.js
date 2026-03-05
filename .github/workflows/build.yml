@@ -1,11 +1,10 @@
 name: Build
 on:
   push:
-    branches: [ master, alma9 ]
-    tags: ['*']
+    branches: [alma9]
+    tags: ['v*']
   pull_request:
-    branches:
-      - master
+    branches: [alma9]
   workflow_dispatch:
 
 permissions:
@@ -53,20 +52,21 @@ jobs:
           ls dist
 
       - name: Publish to alma9-binaries branch
-        if: github.event_name == 'push' || startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           git config --global user.email "victor0801@gmail.com"
           git config --global user.name "jimmyolo"
           git config --global --add safe.directory '*'
 
+          TAG_NAME="${{ github.ref_name }}"
           TEMP_DIR=$(mktemp -d)
           cp dist/*.node "$TEMP_DIR/" 2>/dev/null || true
           cp dist/uws.js "$TEMP_DIR/" 2>/dev/null || true
           if [ -f package.json ]; then cp package.json "$TEMP_DIR/"; fi
           if [ -f docs/index.d.ts ]; then cp docs/index.d.ts "$TEMP_DIR/"; fi
 
-          echo "Artifacts to publish:"
+          echo "Artifacts to publish (tag: $TAG_NAME):"
           ls -la "$TEMP_DIR"
 
           # Checkout target branch (preserving commit history)
@@ -91,14 +91,7 @@ jobs:
           if [ -f package.json ]; then git add package.json; fi
           if [ -f index.d.ts ]; then git add index.d.ts; fi
 
-          # Read version from package.json
-          VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "")
-          COMMIT_MSG="[GitHub Actions] Updated ${{ matrix.os }} binaries"
-          if [ -n "$VERSION" ]; then
-            COMMIT_MSG="[GitHub Actions] Updated ${{ matrix.os }} binaries ($VERSION)"
-          fi
-          
-          git commit -m "$COMMIT_MSG" || exit 0
+          git commit -m "[CI] $TAG_NAME - ${{ matrix.os }} binaries" || exit 0
 
           # Push with retry for concurrent updates
           for i in {1..5}; do
@@ -111,14 +104,3 @@ jobs:
               sleep $((i * 2))
             fi
           done
-
-          # Create version tag for npm installation
-          #   e.g. npm install jimmyolo/uWebSockets.js#v20.57.0
-          if [ -f package.json ]; then
-            VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "")
-            if [ -n "$VERSION" ]; then
-              echo "Creating tag v${VERSION} for npm installation"
-              git tag -f "v${VERSION}"
-              git push -f origin "v${VERSION}"
-            fi
-          fi

@@ -1,5 +1,5 @@
 /*
- * Authored by Alex Hultman, 2018-2025.
+ * Authored by Alex Hultman, 2018-2026.
  * Intellectual property of third-party.
 
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +19,7 @@ module.exports = (() => {
 	try {
 		return require('./uws_' + process.platform + '_' + process.arch + '_' + process.versions.modules + '.node');
 	} catch (e) {
-		throw new Error('This version of uWS.js (v20.56.0) supports only Node.js versions 20, 22, 24 and 25 on (glibc) Linux, macOS and Windows, on Tier 1 platforms (https://github.com/nodejs/node/blob/master/BUILDING.md#platform-list).\n\n' + e.toString());
+		throw new Error('This version of uWS.js (v20.59.0) supports only Node.js versions 20, 22, 24 and 25 on (glibc) Linux, macOS and Windows, on Tier 1 platforms (https://github.com/nodejs/node/blob/master/BUILDING.md#platform-list).\n\n' + e.toString());
 	}
 })();
 
@@ -52,8 +52,8 @@ module.exports.DeclarativeResponse = class DeclarativeResponse {
   write(value) { return this._appendInstructionWithLength(5, value), this; }
   writeParameterValue(key) { return this._appendInstruction(6, key), this; }
 
-  end(value) {
-    const bytes = new TextEncoder().encode(value);
+  end(str) {
+    const bytes = (typeof str === 'string') ? new TextEncoder().encode(str) : str;
     const length = bytes.length;
     this.instructions.push(0, length & 0xff, (length >> 8) & 0xff, ...bytes);
     return new Uint8Array(this.instructions).buffer;

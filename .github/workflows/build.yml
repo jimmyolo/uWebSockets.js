@@ -91,7 +91,10 @@ jobs:
           if [ -f package.json ]; then git add package.json; fi
           if [ -f index.d.ts ]; then git add index.d.ts; fi
 
-          git commit -m "[CI] $TAG_NAME - ${{ matrix.os }} binaries" || exit 0
+          git diff --cached --quiet && git diff --quiet \
+            && echo "No changes to commit for ${{ matrix.os }}, forcing empty commit" \
+            && git commit --allow-empty -m "[CI] $TAG_NAME - ${{ matrix.os }} binaries" \
+            || git commit -m "[CI] $TAG_NAME - ${{ matrix.os }} binaries"
 
           # Push with retry for concurrent updates
           for i in {1..5}; do

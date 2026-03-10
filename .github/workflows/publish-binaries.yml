@@ -20,34 +20,24 @@ permissions:
 
 jobs:
   build-and-publish:
-    runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.container }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ contains(matrix.os, 'ubuntu') && 'almalinux:9' || null }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: windows-latest
-            os: windows-latest
-            container: null
-          - runner: macos-15
-            os: macos-15
-            container: null
-          - runner: ubuntu-latest
-            os: almalinux-9-x64
-            container: almalinux:9
-          - runner: ubuntu-24.04-arm
-            os: almalinux-9-arm64
-            container: almalinux:9
+        os: [windows-latest, macos-15, ubuntu-latest, ubuntu-24.04-arm]
 
     env:
       PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
 
     steps:
-      - name: Install dependencies in AlmaLinux container
-        if: matrix.container == 'almalinux:9'
+      - name: Install dependencies (AlmaLinux)
+        if: contains(matrix.os, 'ubuntu')
         run: |
-          dnf install -y git make gcc gcc-c++ python3 findutils diffutils
-          dnf clean all
+          dnf install -y git make gcc gcc-c++ curl tar gzip which clang cmake zlib-devel openssl-devel perl-core
+          ln -s /usr/bin/clang /usr/bin/clang-18
+          ln -s /usr/bin/clang++ /usr/bin/clang++-18
+          /usr/lib64/libc.so.6
 
       - name: Checkout Source Tree
         uses: actions/checkout@v4
@@ -270,7 +260,7 @@ jobs:
           - **Version**: $VERSION
           - **Target Repo**: [jimmyolo/uws.js](https://github.com/jimmyolo/uws.js)
           - **Branch**: [main](https://github.com/jimmyolo/uws.js/tree/main)
-          - **Platforms**: windows-latest, macos-15, ubuntu-24.04, ubuntu-24.04-arm
+          - **Platforms**: windows-latest, macos-15, almalinux-9-x64, almalinux-9-arm64
 
           ### Installation
 

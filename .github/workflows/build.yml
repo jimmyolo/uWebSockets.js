@@ -15,8 +15,7 @@ jobs:
         if: contains(matrix.os, 'ubuntu')
         run: |
           dnf install -y git make gcc gcc-c++ curl-minimal tar gzip which clang cmake zlib-devel openssl-devel perl-core
-          ln -s /usr/bin/clang /usr/bin/clang-18
-          ln -s /usr/bin/clang++ /usr/bin/clang++-18
+          clang --version
           /usr/lib64/libc.so.6
 
       - name: Setup Windows

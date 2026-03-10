@@ -1,0 +1,60 @@
+name: Sync Tag Deletion to GitHub Binary Branch
+
+on:
+  delete:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-tag-deletion:
+    # 只處理 tag 刪除事件
+    if: github.event.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    env:
+      PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Validate publish token
+        if: ${{ env.PUBLISH_TOKEN == '' }}
+        run: |
+          echo "::error::Missing PUBLISH_TOKEN. Cannot sync tag deletion to jimmyolo/uws.js."
+          exit 1
+
+      - name: Delete tag from target repository
+        run: |
+          # 取得被刪除的 tag 名稱
+          TAG_NAME="${{ github.event.ref }}"
+          echo "Deleting tag: $TAG_NAME from jimmyolo/uws.js"
+
+          # 設定目標 repo 的 remote
+          git remote add publish-repo https://x-access-token:${PUBLISH_TOKEN}@github.com/jimmyolo/uws.js.git
+
+          # 刪除遠端 tag（使用 :refs/tags/TAG_NAME 語法）
+          git push publish-repo ":refs/tags/$TAG_NAME" || echo "Tag $TAG_NAME not found in target repo (already deleted or never existed)"
+
+          echo "✅ Tag $TAG_NAME deleted from https://github.com/jimmyolo/uws.js"
+
+      - name: Create deletion summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## 🗑️ Tag Deletion Sync
+
+          - **Deleted Tag**: ${{ github.event.ref }}
+          - **Target Repo**: [jimmyolo/uws.js](https://github.com/jimmyolo/uws.js)
+          - **Status**: Tag deleted from target repository
+
+          The tag has been removed from both the source repository and the main branch in the target repository.
+          EOF

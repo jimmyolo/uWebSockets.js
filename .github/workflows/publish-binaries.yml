@@ -1,0 +1,294 @@
+name: Publish Binaries to GitHub
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      force_publish:
+        description: 'Force publish even if tests fail'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            os: windows-latest
+            container: null
+          - runner: macos-15
+            os: macos-15
+            container: null
+          - runner: ubuntu-latest
+            os: almalinux-9-x64
+            container: almalinux:9
+          - runner: ubuntu-24.04-arm
+            os: almalinux-9-arm64
+            container: almalinux:9
+
+    env:
+      PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+
+    steps:
+      - name: Install dependencies in AlmaLinux container
+        if: matrix.container == 'almalinux:9'
+        run: |
+          dnf install -y git make gcc gcc-c++ python3 findutils diffutils
+          dnf clean all
+
+      - name: Checkout Source Tree
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Windows
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup NASM for Windows
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/setup-nasm@v1.2.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 25
+
+      - name: Build binaries
+        run: |
+          ${{ matrix.os == 'windows-latest' && 'nmake' || 'make' }}
+          ls dist
+
+      - name: Run smoke tests
+        id: tests
+        continue-on-error: ${{ github.event.inputs.force_publish == 'true' }}
+        run: |
+          cd tests
+          npm install ws
+          node smoke.js
+          cd ..
+
+      - name: Get version info
+        id: version_info
+        shell: bash
+        run: |
+          if [ -f "package.json" ]; then
+            VERSION=$(node -p "require('./package.json').version")
+          else
+            VERSION=${GITHUB_REF#refs/tags/v}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+          SOURCE_COMMIT=$(git rev-parse HEAD)
+          echo "source_commit=$SOURCE_COMMIT" >> $GITHUB_OUTPUT
+          echo "Source commit: $SOURCE_COMMIT"
+
+      - name: Create package.json
+        shell: bash
+        run: |
+          VERSION="${{ steps.version_info.outputs.version }}"
+          cat > package.json << EOF
+          {
+            "name": "@jimmyolo/uws.js",
+            "version": "${VERSION}",
+            "description": "glibc 2.34 compatible uWebSockets.js build",
+            "main": "uws.js",
+            "types": "index.d.ts",
+            "repository": {
+              "type": "git",
+              "url": "git+https://github.com/jimmyolo/uws.js.git"
+            },
+            "files": [
+              "uws.js",
+              "*.node",
+              "index.d.ts"
+            ]
+          }
+          EOF
+          echo "Created package.json with version ${VERSION}"
+
+      - name: Prepare distribution files
+        shell: bash
+        run: |
+          # 創建發布目錄
+          mkdir -p publish-dist
+
+          # 複製 package.json
+          cp package.json publish-dist/
+
+          # 複製 dist 目錄的所有內容 (包含 uws.js 和 *.node)
+          cp dist/* publish-dist/ 2>/dev/null || true
+
+          # 複製 TypeScript definitions
+          if [ -f "docs/index.d.ts" ]; then
+            cp docs/index.d.ts publish-dist/
+          fi
+
+          # 記錄 source commit
+          echo "${{ steps.version_info.outputs.source_commit }}" > publish-dist/source_commit
+
+          echo "=== Files to be published ==="
+          ls -lah publish-dist/
+
+          # 將產物移到 /tmp，避免切換分支後消失
+          mkdir -p /tmp/binaries-publish-${{ github.run_id }}-${{ matrix.os }}
+          cp -r publish-dist/* /tmp/binaries-publish-${{ github.run_id }}-${{ matrix.os }}/
+          echo "Build artifacts saved to /tmp/binaries-publish-${{ github.run_id }}-${{ matrix.os }}/"
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Validate publish token
+        if: ${{ env.PUBLISH_TOKEN == '' }}
+        run: |
+          echo "::error::Missing PUBLISH_TOKEN. Create a PAT with repo access to jimmyolo/uws.js and add it to repository secrets."
+          exit 1
+
+      - name: Fetch and checkout main branch
+        shell: bash
+        run: |
+          # 設定目標 repo 的 remote（使用 PUBLISH_TOKEN 來訪問其他 repo）
+          git remote remove publish-repo || true
+          git remote add publish-repo https://x-access-token:${PUBLISH_TOKEN}@github.com/jimmyolo/uws.js.git
+
+          # 嘗試 fetch main 分支
+          git fetch publish-repo main:main || echo "main branch doesn't exist yet, will create new one"
+
+          # 檢查分支是否存在
+          if git show-ref --verify --quiet refs/heads/main; then
+            echo "Checking out existing main branch"
+            git checkout main
+          else
+            echo "Creating new orphan main branch"
+            git checkout --orphan main
+            git rm -rf .
+          fi
+
+      - name: Copy build artifacts to main branch
+        shell: bash
+        run: |
+          # 從 /tmp 複製構建產物（保留現有文件，只覆蓋/添加新文件）
+          cp -r /tmp/binaries-publish-${{ github.run_id }}-${{ matrix.os }}/* .
+
+          echo "=== Final main branch structure ==="
+          ls -lah
+
+          # 清理臨時檔案
+          rm -rf /tmp/binaries-publish-${{ github.run_id }}-${{ matrix.os }}
+
+      - name: Commit and push to main branch
+        shell: bash
+        run: |
+          # 添加所有變更
+          git add -A
+
+          # 檢查是否有變更
+          if git diff --staged --quiet; then
+            echo "No changes to commit for ${{ matrix.os }}"
+            exit 0
+          fi
+
+          # 使用固定的 commit message template
+          git commit -m "[GitHub Actions] Updated ${{ matrix.os }} binaries for v${{ steps.version_info.outputs.version }}"
+
+          # 推送到目標 repo 的 main 分支
+          git push publish-repo main
+
+          echo "✅ Successfully published ${{ matrix.os }} binaries to https://github.com/jimmyolo/uws.js"
+
+  sync-tag:
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    env:
+      PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+
+    steps:
+      - name: Checkout Source Tree
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "jimmyolo"
+          git config --global user.email "victor0801x@gmail.com"
+
+      - name: Sync tag to main branch
+        run: |
+          # 設定目標 repo 的 remote
+          git remote add publish-repo https://x-access-token:${PUBLISH_TOKEN}@github.com/jimmyolo/uws.js.git
+
+          # 取得當前的 tag 名稱
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          echo "Syncing tag: $TAG_NAME"
+
+          # Fetch main branch
+          git fetch publish-repo main:main
+          git checkout main
+
+          # 在 main 分支的當前 commit 上打 tag
+          git tag -f "$TAG_NAME"
+
+          # 推送 tag 到目標 repo（使用 -f 強制更新，以防 tag 已存在）
+          git push publish-repo "$TAG_NAME" -f
+
+          echo "✅ Tag $TAG_NAME synced to https://github.com/jimmyolo/uws.js"
+
+      - name: Create deployment summary
+        if: always()
+        run: |
+          if [ -f "package.json" ]; then
+            VERSION=$(node -p "require('./package.json').version")
+          else
+            VERSION=${GITHUB_REF#refs/tags/v}
+          fi
+
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 📦 Binary Package Deployment
+
+          - **Version**: $VERSION
+          - **Target Repo**: [jimmyolo/uws.js](https://github.com/jimmyolo/uws.js)
+          - **Branch**: [main](https://github.com/jimmyolo/uws.js/tree/main)
+          - **Platforms**: windows-latest, macos-15, ubuntu-24.04, ubuntu-24.04-arm
+
+          ### Installation
+
+          \`\`\`bash
+          # Using npm
+          npm install jimmyolo/uws.js#v${VERSION}
+
+          # Using package.json
+          {
+            "dependencies": {
+              "uWebSockets.js": "github:jimmyolo/uws.js#v${VERSION}"
+            }
+          }
+          \`\`\`
+
+          ### Package Contents
+          - \`*.node\` - Native addon binaries for each platform
+          - \`*.js\` - JavaScript wrappers
+          - \`index.d.ts\` - TypeScript definitions
+          - \`source_commit\` - Source commit reference
+          EOF

@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies (AlmaLinux)
         if: contains(matrix.os, 'ubuntu')
         run: |
-          dnf install -y git make gcc gcc-c++ curl tar gzip which clang cmake zlib-devel openssl-devel perl-core
+          dnf install -y git make gcc gcc-c++ curl-minimal tar gzip which clang cmake zlib-devel openssl-devel perl-core
           ln -s /usr/bin/clang /usr/bin/clang-18
           ln -s /usr/bin/clang++ /usr/bin/clang++-18
           /usr/lib64/libc.so.6

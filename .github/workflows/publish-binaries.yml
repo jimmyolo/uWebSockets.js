@@ -19,7 +19,7 @@ permissions:
   contents: write
 
 jobs:
-  build-and-publish:
+  build:
     runs-on: ${{ matrix.os }}
     container: ${{ contains(matrix.os, 'ubuntu') && 'almalinux:9' || null }}
     strategy:
@@ -27,17 +27,11 @@ jobs:
       matrix:
         os: [windows-latest, macos-15, ubuntu-latest, ubuntu-24.04-arm]
 
-    env:
-      PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
-
     steps:
       - name: Install dependencies (AlmaLinux)
         if: contains(matrix.os, 'ubuntu')
         run: |
           dnf install -y git make gcc gcc-c++ curl-minimal tar gzip which clang cmake zlib-devel openssl-devel perl-core
-          ln -s /usr/bin/clang /usr/bin/clang-18
-          ln -s /usr/bin/clang++ /usr/bin/clang++-18
-          /usr/lib64/libc.so.6
 
       - name: Checkout Source Tree
         uses: actions/checkout@v4
@@ -73,30 +67,65 @@ jobs:
           node smoke.js
           cd ..
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.os }}
+          path: dist/*.node
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    env:
+      PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+
+    steps:
+      - name: Checkout Source Tree
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 25
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
       - name: Get version info
         id: version_info
-        shell: bash
         run: |
-          if [ -f "package.json" ]; then
-            VERSION=$(node -p "require('./package.json').version")
-          else
-            VERSION=${GITHUB_REF#refs/tags/v}
-          fi
+          VERSION=${GITHUB_REF#refs/tags/v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
 
-          SOURCE_COMMIT=$(git rev-parse HEAD)
-          echo "source_commit=$SOURCE_COMMIT" >> $GITHUB_OUTPUT
-          echo "Source commit: $SOURCE_COMMIT"
-
-      - name: Create package.json
-        shell: bash
+      - name: Prepare distribution files
         run: |
-          VERSION="${{ steps.version_info.outputs.version }}"
-          cat > package.json << EOF
+          # 創建發布目錄
+          mkdir -p publish-dist
+
+          # 複製所有平台的 .node 文件
+          find artifacts -name "*.node" -exec cp {} publish-dist/ \;
+
+          # 複製 uws.js
+          cp src/uws.js publish-dist/
+
+          # 複製 TypeScript definitions
+          cp docs/index.d.ts publish-dist/
+
+          # 創建 package.json
+          cat > publish-dist/package.json << EOF
           {
             "name": "@jimmyolo/uws.js",
-            "version": "${VERSION}",
+            "version": "${{ steps.version_info.outputs.version }}",
             "description": "glibc 2.34 compatible uWebSockets.js build",
             "main": "uws.js",
             "types": "index.d.ts",
@@ -111,40 +140,15 @@ jobs:
             ]
           }
           EOF
-          echo "Created package.json with version ${VERSION}"
-
-      - name: Prepare distribution files
-        shell: bash
-        run: |
-          # 創建發布目錄
-          mkdir -p publish-dist
-
-          # 複製 package.json
-          cp package.json publish-dist/
-
-          # 複製 dist 目錄的所有內容 (包含 uws.js 和 *.node)
-          cp dist/* publish-dist/ 2>/dev/null || true
-
-          # 複製 TypeScript definitions
-          if [ -f "docs/index.d.ts" ]; then
-            cp docs/index.d.ts publish-dist/
-          fi
-
-          # 記錄 source commit
-          echo "${{ steps.version_info.outputs.source_commit }}" > publish-dist/source_commit
 
           echo "=== Files to be published ==="
           ls -lah publish-dist/
 
-          # 將產物移到 /tmp，避免切換分支後消失
-          mkdir -p /tmp/binaries-publish-${{ github.run_id }}-${{ matrix.os }}
-          cp -r publish-dist/* /tmp/binaries-publish-${{ github.run_id }}-${{ matrix.os }}/
-          echo "Build artifacts saved to /tmp/binaries-publish-${{ github.run_id }}-${{ matrix.os }}/"
-
       - name: Configure Git
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global --add safe.directory '*'
+          git config --global user.name "jimmyolo"
+          git config --global user.email "victor0801@gmail.com"
 
       - name: Validate publish token
         if: ${{ env.PUBLISH_TOKEN == '' }}
@@ -152,107 +156,46 @@ jobs:
           echo "::error::Missing PUBLISH_TOKEN. Create a PAT with repo access to jimmyolo/uws.js and add it to repository secrets."
           exit 1
 
-      - name: Fetch and checkout main branch
-        shell: bash
+      - name: Publish to target repository
         run: |
-          # 設定目標 repo 的 remote（使用 PUBLISH_TOKEN 來訪問其他 repo）
-          git remote remove publish-repo || true
-          git remote add publish-repo https://x-access-token:${PUBLISH_TOKEN}@github.com/jimmyolo/uws.js.git
+          # Clone 或創建目標 repo 的 main 分支
+          git clone https://x-access-token:${PUBLISH_TOKEN}@github.com/jimmyolo/uws.js.git target-repo || {
+            mkdir target-repo
+            cd target-repo
+            git init
+            git checkout -b main
+            cd ..
+          }
 
-          # 嘗試 fetch main 分支
-          git fetch publish-repo main:main || echo "main branch doesn't exist yet, will create new one"
+          cd target-repo
+          git checkout main || git checkout -b main
 
-          # 檢查分支是否存在
-          if git show-ref --verify --quiet refs/heads/main; then
-            echo "Checking out existing main branch"
-            git checkout main
-          else
-            echo "Creating new orphan main branch"
-            git checkout --orphan main
-            git rm -rf .
-          fi
+          # 清空目錄（保留 .git）
+          find . -maxdepth 1 ! -name '.git' ! -name '.' ! -name '..' -exec rm -rf {} +
 
-      - name: Copy build artifacts to main branch
-        shell: bash
-        run: |
-          # 從 /tmp 複製構建產物（保留現有文件，只覆蓋/添加新文件）
-          cp -r /tmp/binaries-publish-${{ github.run_id }}-${{ matrix.os }}/* .
+          # 複製所有發布文件
+          cp -r ../publish-dist/* .
 
-          echo "=== Final main branch structure ==="
-          ls -lah
-
-          # 清理臨時檔案
-          rm -rf /tmp/binaries-publish-${{ github.run_id }}-${{ matrix.os }}
-
-      - name: Commit and push to main branch
-        shell: bash
-        run: |
-          # 添加所有變更
+          # Commit 並 push
           git add -A
-
-          # 檢查是否有變更
           if git diff --staged --quiet; then
-            echo "No changes to commit for ${{ matrix.os }}"
-            exit 0
+            echo "No changes to commit"
+          else
+            git commit -m "[CI] Publish v${{ steps.version_info.outputs.version }} binaries"
+            git push https://x-access-token:${PUBLISH_TOKEN}@github.com/jimmyolo/uws.js.git main
           fi
 
-          # 使用固定的 commit message template
-          git commit -m "[GitHub Actions] Updated ${{ matrix.os }} binaries for v${{ steps.version_info.outputs.version }}"
-
-          # 推送到目標 repo 的 main 分支
-          git push publish-repo main
-
-          echo "✅ Successfully published ${{ matrix.os }} binaries to https://github.com/jimmyolo/uws.js"
-
-  sync-tag:
-    needs: build-and-publish
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-
-    env:
-      PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
-
-    steps:
-      - name: Checkout Source Tree
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Configure Git
-        run: |
-          git config --global user.name "jimmyolo"
-          git config --global user.email "victor0801x@gmail.com"
-
-      - name: Sync tag to main branch
-        run: |
-          # 設定目標 repo 的 remote
-          git remote add publish-repo https://x-access-token:${PUBLISH_TOKEN}@github.com/jimmyolo/uws.js.git
-
-          # 取得當前的 tag 名稱
+          # 同步 tag
           TAG_NAME=${GITHUB_REF#refs/tags/}
-          echo "Syncing tag: $TAG_NAME"
-
-          # Fetch main branch
-          git fetch publish-repo main:main
-          git checkout main
-
-          # 在 main 分支的當前 commit 上打 tag
           git tag -f "$TAG_NAME"
+          git push https://x-access-token:${PUBLISH_TOKEN}@github.com/jimmyolo/uws.js.git "$TAG_NAME" -f
 
-          # 推送 tag 到目標 repo（使用 -f 強制更新，以防 tag 已存在）
-          git push publish-repo "$TAG_NAME" -f
-
-          echo "✅ Tag $TAG_NAME synced to https://github.com/jimmyolo/uws.js"
+          echo "✅ Successfully published to https://github.com/jimmyolo/uws.js"
 
       - name: Create deployment summary
         if: always()
         run: |
-          if [ -f "package.json" ]; then
-            VERSION=$(node -p "require('./package.json').version")
-          else
-            VERSION=${GITHUB_REF#refs/tags/v}
-          fi
+          VERSION=${{ steps.version_info.outputs.version }}
 
           cat >> $GITHUB_STEP_SUMMARY << EOF
           ## 📦 Binary Package Deployment
@@ -278,7 +221,7 @@ jobs:
 
           ### Package Contents
           - \`*.node\` - Native addon binaries for each platform
-          - \`*.js\` - JavaScript wrappers
+          - \`uws.js\` - JavaScript wrapper
           - \`index.d.ts\` - TypeScript definitions
-          - \`source_commit\` - Source commit reference
+          - \`package.json\` - Package metadata
           EOF

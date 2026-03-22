@@ -71,7 +71,8 @@ void uWS_App_ws(const FunctionCallbackInfo<Value> &args) {
         /* maxLifetime or default */
         MaybeLocal<Value> maybeMaxLifetime = behaviorObject->Get(isolate->GetCurrentContext(), String::NewFromUtf8(isolate, "maxLifetime", NewStringType::kNormal).ToLocalChecked());
         if (!maybeMaxLifetime.IsEmpty() && !maybeMaxLifetime.ToLocalChecked()->IsUndefined()) {
-            behavior.maxLifetime = maybeMaxLifetime.ToLocalChecked()->Int32Value(isolate->GetCurrentContext()).ToChecked();
+            /* Cap at 239 to avoid modulo wraparound in uSockets (240 % 240 == 0 == current timestamp, causing immediate timeout), and ensure non-negative */
+            behavior.maxLifetime = std::max(0, std::min<int>(maybeMaxLifetime.ToLocalChecked()->Int32Value(isolate->GetCurrentContext()).ToChecked(), 239));
         }
 
         /* closeOnBackpressureLimit or default */
@@ -167,6 +168,17 @@ void uWS_App_ws(const FunctionCallbackInfo<Value> &args) {
                     wsObject->Set(isolate->GetCurrentContext(),
                         keys->Get(isolate->GetCurrentContext(), i).ToLocalChecked(),
                         userData->Get(isolate->GetCurrentContext(), keys->Get(isolate->GetCurrentContext(), i).ToLocalChecked()).ToLocalChecked()
+                        ).ToChecked();
+                }
+            }
+
+            /* Also copy symbol properties */
+            Local<Array> symbols;
+            if (userData->GetOwnPropertyNames(isolate->GetCurrentContext(), static_cast<PropertyFilter>(SKIP_STRINGS)).ToLocal(&symbols)) {
+                for (int i = 0; i < symbols->Length(); i++) {
+                    wsObject->Set(isolate->GetCurrentContext(),
+                        symbols->Get(isolate->GetCurrentContext(), i).ToLocalChecked(),
+                        userData->Get(isolate->GetCurrentContext(), symbols->Get(isolate->GetCurrentContext(), i).ToLocalChecked()).ToLocalChecked()
                         ).ToChecked();
                 }
             }
@@ -654,7 +666,12 @@ std::pair<uWS::SocketContextOptions, bool> readOptionsObject(const FunctionCallb
     /* Read the options object if any */
     uWS::SocketContextOptions options = {};
     thread_local std::string keyFileName, certFileName, passphrase, dhParamsFileName, caFileName, sslCiphers;
-    if (args.Length() > index) {
+    if (args.Length() > index && !args[index]->IsUndefined() && !args[index]->IsNull()) {
+
+        if (!args[index]->IsObject()) {
+            args.GetReturnValue().Set(isolate->ThrowException(v8::Exception::Error(String::NewFromUtf8(isolate, "Options must be an object.", NewStringType::kNormal).ToLocalChecked())));
+            return {};
+        }
 
         Local<Object> optionsObject = Local<Object>::Cast(args[index]);
 

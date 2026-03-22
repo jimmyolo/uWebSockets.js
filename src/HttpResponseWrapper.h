@@ -111,6 +111,133 @@ struct HttpResponseWrapper {
         }
     }
 
+    /* Takes integer maxSize and function of fullData. Accumulates all data chunks and calls handler with the complete
+     * body as an ArrayBuffer once all data has arrived. If the body exceeds maxSize bytes, handler is called with
+     * null instead. Fast path: if all data arrives in a single chunk no allocation is made and the ArrayBuffer is
+     * zero-copy (backed directly by the incoming data, detached after the call). Slow path: chunks are lazily
+     * accumulated into a std::vector whose memory is transferred zero-copy into the ArrayBuffer backing store.
+     * Returns this */
+    template <int SSL>
+    static void res_collectBody(const FunctionCallbackInfo<Value> &args) {
+        Isolate *isolate = args.GetIsolate();
+        auto *res = getHttpResponse<SSL>(args);
+        if (res) {
+
+            /* This is how we capture res (C++ this in invocation of this function) */
+            UniquePersistent<Object> resObject(isolate, args.This());
+
+            res->onAborted([resObject = std::move(resObject), isolate]() {
+                HandleScope hs(isolate);
+                /* Mark this resObject invalid */
+                Local<Object>::New(isolate, resObject)->SetAlignedPointerInInternalField(0, nullptr);
+            });
+            
+            size_t maxSize = (size_t) args[0]->NumberValue(isolate->GetCurrentContext()).ToChecked();
+
+            /* This thing perfectly fits in with unique_function, and will Reset on destructor */
+            UniquePersistent<Function> p(isolate, Local<Function>::Cast(args[1]));
+
+            /* Lazily allocated; nullptr means not yet started. Separate overflow flag distinguishes
+             * the "not started" state from the "exceeded maxSize" state. */
+            std::unique_ptr<std::vector<char>> buffer;
+            bool overflow = false;
+
+            res->onDataV2([res, p = std::move(p), buffer = std::move(buffer), overflow, maxSize, isolate](std::string_view data, uint64_t maxRemainingBodyLength) mutable {
+                HandleScope hs(isolate);
+
+                if (!overflow) {
+                    if (!buffer) {
+                        /* Fast path: this is the very first (and possibly only) chunk */
+                        if (maxRemainingBodyLength == 0) {
+                            if (data.size() <= maxSize) {
+                                /* Single-chunk zero-copy: wrap data directly, detach after call like onData */
+                                Local<ArrayBuffer> ab = ArrayBuffer_New(isolate, (void *) data.data(), data.size());
+                                Local<Value> argv[] = {ab};
+                                CallJS(isolate, Local<Function>::New(isolate, p), 1, argv);
+                                ab->Detach();
+                            } else {
+                                Local<Value> argv[] = {Null(isolate)};
+                                CallJS(isolate, Local<Function>::New(isolate, p), 1, argv);
+                            }
+                            return;
+                        }
+                        /* Slow path begins: allocate buffer lazily for first non-terminal chunk */
+                        if (data.size() <= maxSize) {
+                            buffer = std::make_unique<std::vector<char>>();
+                            /* Preallocate with hint */
+                            if (maxRemainingBodyLength <= maxSize) {
+                                buffer->reserve(maxRemainingBodyLength); // this includes the total size on first call (look over this)
+                            }
+                            buffer->assign(data.begin(), data.end());
+                        } else {
+                            overflow = true;
+                        }
+                    } else {
+                        /* Subsequent chunks: accumulate or mark overflow; guard both sides of subtraction */
+                        if (buffer->size() <= maxSize && data.size() <= maxSize - buffer->size()) {
+                            buffer->insert(buffer->end(), data.begin(), data.end());
+                        } else {
+                            buffer.reset();
+                            overflow = true;
+                        }
+                    }
+                }
+
+                if (maxRemainingBodyLength == 0) {
+                    if (!overflow) {
+                        /* Zero-copy: hand V8 the vector's own memory via a custom deleter */
+                        auto *rawBuffer = buffer.release();
+                        auto backingStore = ArrayBuffer::NewBackingStore(
+                            rawBuffer->data(), rawBuffer->size(),
+                            [](void *, size_t, void *deleter_data) {
+                                delete static_cast<std::vector<char> *>(deleter_data);
+                            },
+                            rawBuffer
+                        );
+                        Local<ArrayBuffer> ab = ArrayBuffer::New(isolate, std::move(backingStore));
+                        Local<Value> argv[] = {ab};
+                        CallJS(isolate, Local<Function>::New(isolate, p), 1, argv);
+                    } else {
+                        Local<Value> argv[] = {Null(isolate)};
+                        CallJS(isolate, Local<Function>::New(isolate, p), 1, argv);
+                    }
+                }
+            });
+
+            args.GetReturnValue().Set(args.This());
+        }
+    }
+
+    /* Takes a function of (chunk, maxRemainingBodyLength). Combines onAborted and onData into a single callback.
+     * If chunk is null, the connection was aborted. If maxRemainingBodyLength is 0, the last chunk has arrived.
+     * The JS object is invalidated before the abort callback is called. Returns this. */
+    template <int SSL>
+    static void res_onDataV2(const FunctionCallbackInfo<Value> &args) {
+        Isolate *isolate = args.GetIsolate();
+        auto *res = getHttpResponse<SSL>(args);
+        if (res) {
+            /* Share the persistent function between both onAborted and onData lambdas */
+            auto sharedP = std::make_shared<UniquePersistent<Function>>(isolate, Local<Function>::Cast(args[0]));
+
+            /* This is how we capture res (C++ this in invocation of this function) */
+            UniquePersistent<Object> resObject(isolate, args.This());
+
+            res->onDataV2([res, sharedP, isolate](std::string_view data, uint64_t maxRemainingBodyLength) {
+                HandleScope hs(isolate);
+
+                Local<ArrayBuffer> dataArrayBuffer = ArrayBuffer_New(isolate, (void *) data.data(), data.length());
+
+                /* Pass maxRemainingBodyLength so user can preallocate; 0 signals the last chunk */
+                Local<Value> argv[] = {dataArrayBuffer, BigInt::NewFromUnsigned(isolate, maxRemainingBodyLength)};
+                CallJS(isolate, Local<Function>::New(isolate, *sharedP), 2, argv);
+
+                dataArrayBuffer->Detach();
+            });
+
+            args.GetReturnValue().Set(args.This());
+        }
+    }
+
     /* Takes nothing, returns nothing. Cb wants nothing returned. */
     template <int SSL>
     static void res_onAborted(const FunctionCallbackInfo<Value> &args) {
@@ -160,6 +287,18 @@ struct HttpResponseWrapper {
         }
     }
 
+    /* Takes nothing, returns integer */
+    template <int SSL>
+    static void res_getRemotePort(const FunctionCallbackInfo<Value> &args) {
+        Isolate *isolate = args.GetIsolate();
+        auto *res = getHttpResponse<SSL>(args);
+        if (res) {
+            unsigned int port = res->getRemotePort();
+
+            args.GetReturnValue().Set(Integer::NewFromUnsigned(isolate, port));
+        }
+    }
+
     /* Takes nothing, returns arraybuffer */
     template <int SSL>
     static void res_getProxiedRemoteAddress(const FunctionCallbackInfo<Value> &args) {
@@ -181,6 +320,18 @@ struct HttpResponseWrapper {
             std::string_view ip = res->getProxiedRemoteAddressAsText();
 
             args.GetReturnValue().Set(ArrayBuffer_NewCopy(isolate, (void *) ip.data(), ip.length()));
+        }
+    }
+
+    /* Takes nothing, returns number */
+    template <int SSL>
+    static void res_getProxiedRemotePort(const FunctionCallbackInfo<Value> &args) {
+        Isolate *isolate = args.GetIsolate();
+        auto *res = getHttpResponse<SSL>(args);
+        if (res) {
+            unsigned int port = res->getProxiedRemotePort();
+
+            args.GetReturnValue().Set(Integer::NewFromUnsigned(isolate, port));
         }
     }
 
@@ -463,17 +614,21 @@ struct HttpResponseWrapper {
             resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "onWritable", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_onWritable<SSL>));
             resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "onAborted", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_onAborted<SSL>));
             resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "onData", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_onData<SSL>));
-
+            
             /* QUIC has a lot of functions unimplemented */
             if constexpr (SSL != 2) {
+                resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "onDataV2", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_onDataV2<SSL>));
+                resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "collectBody", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_collectBody<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "getWriteOffset", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_getWriteOffset<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "getRemoteAddress", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_getRemoteAddress<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "cork", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_cork<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "collect", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_cork<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "upgrade", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_upgrade<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "getRemoteAddressAsText", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_getRemoteAddressAsText<SSL>));
+                resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "getRemotePort", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_getRemotePort<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "getProxiedRemoteAddress", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_getProxiedRemoteAddress<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "getProxiedRemoteAddressAsText", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_getProxiedRemoteAddressAsText<SSL>));
+                resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "getProxiedRemotePort", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_getProxiedRemotePort<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "pause", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_pause<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "resume", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_resume<SSL>));
             }

@@ -23,6 +23,25 @@
 #include <v8.h>
 using namespace v8;
 
+/* Getting internal pointer is different in recent V8 versions */
+#if (V8_MAJOR_VERSION == 14)
+    void *getInternalPointer(const Local<Object> &holder) {
+        return holder->GetAlignedPointerFromInternalField(0, 0);
+    }
+
+    void setInternalPointer(const Local<Object> &holder, void *value) {
+        holder->SetAlignedPointerInInternalField(0, value, 0);
+    }
+#else
+    void *getInternalPointer(const Local<Object> &holder) {
+        return holder->GetAlignedPointerFromInternalField(0);
+    }
+
+    void setInternalPointer(const Local<Object> &holder, void *value) {
+        holder->SetAlignedPointerInInternalField(0, value);
+    }
+#endif
+
 /* Unfortunately we _have_ to depend on Node.js crap */
 #include <node.h>
 
@@ -168,11 +187,20 @@ public:
 
             /* StringView path is Latin-1, not Utf-8 */
 
-            // Fallback
-            length = string->Utf8Length(isolate);
-            data = alloc(length);
-            allocated = true;
-            string->WriteUtf8(isolate, data, length, nullptr, String::WriteOptions::NO_NULL_TERMINATION);
+            #if (V8_MAJOR_VERSION == 14)
+                // Fallback
+                length = string->Utf8LengthV2(isolate);
+                data = alloc(length);
+                allocated = true;
+                string->WriteUtf8V2(isolate, data, length);
+            #else
+                // Fallback
+                length = string->Utf8Length(isolate);
+                data = alloc(length);
+                allocated = true;
+                string->WriteUtf8(isolate, data, length, nullptr, String::WriteOptions::NO_NULL_TERMINATION);
+            #endif
+
 
         } else if (value->IsArrayBufferView()) { /* DataView or TypedArray */
             Local<ArrayBufferView> arrayBufferView = Local<ArrayBufferView>::Cast(value);

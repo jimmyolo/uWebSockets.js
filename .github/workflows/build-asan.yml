@@ -13,9 +13,9 @@ jobs:
         os: [macos-15, ubuntu-24.04, ubuntu-24.04-arm]
     steps:
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 25
+          node-version: 26
       - name: Update ASAN binaries
         run: |
           git clone --recursive https://github.com/uNetworking/uWebSockets.js.git

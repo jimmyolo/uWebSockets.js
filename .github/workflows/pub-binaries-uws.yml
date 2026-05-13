@@ -52,7 +52,7 @@ jobs:
           fi
 
       - name: Checkout Source Tree
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
           fetch-depth: 0
@@ -67,9 +67,9 @@ jobs:
         uses: ilammy/setup-nasm@v1.2.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 25
+          node-version: 26
 
       - name: Build binaries
         run: |
@@ -86,7 +86,7 @@ jobs:
           cd ..
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: binaries-${{ matrix.os }}
           path: dist/*.node
@@ -102,19 +102,19 @@ jobs:
 
     steps:
       - name: Checkout Source Tree
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
           fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 25
+          node-version: 26
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 

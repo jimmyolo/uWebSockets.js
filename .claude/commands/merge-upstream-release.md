@@ -15,9 +15,14 @@ Examples:
 
 Run in order and stop immediately if any command fails:
 
-1. Identify the latest release tag and its commit hash:
-   `git tag --sort=-v:refname | grep '^v' | head -5`
-   `git rev-list -n 1 <tag>` — get full commit hash for the tag
+1. Identify the latest release tag and the upstream master commit it was built from:
+   `git fetch --no-tags upstream master`
+   `git ls-remote --tags --refs --sort=-v:refname upstream 'v*' | head -1` — latest tag and the commit it points at
+   `gh api repos/uNetworking/uWebSockets.js/commits/<tag-commit> --jq .commit.committer.date` — when the release binaries were committed
+   `git log -1 --format=%H --before=<date> upstream/master` — full hash of the master commit to merge
+
+   Do not merge the tag's own commit: release tags point at the `binaries` branch, not master.
+   Do not `git fetch --tags` either: it downloads the binaries history and runs for minutes.
 
 2. Ensure local alma9-v2 is in sync with origin:
    `git checkout alma9-v2`

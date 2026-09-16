@@ -131,7 +131,7 @@ void build_boringssl(const char *arch) {
 char *build_simdutf(char *cpp_compiler, char *flags) {
     char *cxxflags = getenv("CXXFLAGS") ? getenv("CXXFLAGS") : "";
     if (strstr(cxxflags, "UWS_USE_SIMDUTF")) {
-        run("curl --create-dirs -fL -o simdutf/simdutf.h https://github.com/simdutf/simdutf/releases/download/v9.2.0/simdutf.h && curl --create-dirs -fL -o simdutf/simdutf.cpp https://github.com/simdutf/simdutf/releases/download/v9.2.0/simdutf.cpp");
+        run("curl --create-dirs -fL -o simdutf/simdutf.h https://github.com/simdutf/simdutf/releases/latest/download/simdutf.h && curl --create-dirs -fL -o simdutf/simdutf.cpp https://github.com/simdutf/simdutf/releases/latest/download/simdutf.cpp");
         run("%s %s -c -std=c++20 simdutf/simdutf.cpp", cpp_compiler, flags);
     }
     return cxxflags;

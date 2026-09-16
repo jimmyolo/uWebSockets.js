@@ -127,15 +127,26 @@ void build_boringssl(const char *arch) {
 
 }
 
+/* Returns CXXFLAGS; when it asks for UWS_USE_SIMDUTF, also builds simdutf.o, which the link picks up through *.o */
+char *build_simdutf(char *cpp_compiler, char *flags) {
+    char *cxxflags = getenv("CXXFLAGS") ? getenv("CXXFLAGS") : "";
+    if (strstr(cxxflags, "UWS_USE_SIMDUTF")) {
+        run("curl --create-dirs -fL -o simdutf/simdutf.h https://github.com/simdutf/simdutf/releases/latest/download/simdutf.h && curl --create-dirs -fL -o simdutf/simdutf.cpp https://github.com/simdutf/simdutf/releases/latest/download/simdutf.cpp");
+        run("%s %s -c -std=c++20 simdutf/simdutf.cpp", cpp_compiler, flags);
+    }
+    return cxxflags;
+}
+
 /* Build for Unix systems */
 void build(char *compiler, char *cpp_compiler, char *cpp_linker, char *os, const char *arch) {
 
     char *c_shared = "-DWIN32_LEAN_AND_MEAN -DLIBUS_USE_LIBUV -DLIBUS_USE_QUIC -I uWebSockets/uSockets/lsquic/include -I uWebSockets/uSockets/boringssl/include -pthread -DLIBUS_USE_OPENSSL" OPT_FLAGS " -c -fPIC -I uWebSockets/uSockets/src uWebSockets/uSockets/src/*.c uWebSockets/uSockets/src/eventing/*.c uWebSockets/uSockets/src/crypto/*.c";
     char *cpp_shared = "-DWIN32_LEAN_AND_MEAN -DUWS_WITH_PROXY -DUWS_REMOTE_ADDRESS_USERSPACE -DLIBUS_USE_LIBUV -DLIBUS_USE_QUIC -I uWebSockets/uSockets/boringssl/include -pthread -DLIBUS_USE_OPENSSL" OPT_FLAGS " -c -fPIC -std=c++20 -I uWebSockets/uSockets/src -I uWebSockets/src src/addon.cpp uWebSockets/uSockets/src/crypto/sni_tree.cpp";
+    char *cxxflags = build_simdutf(cpp_compiler, OPT_FLAGS " -fPIC");
 
     for (unsigned int i = 0; i < sizeof(versions) / sizeof(struct node_version); i++) {
         run("%s %s -I targets/node-%s/include/node", compiler, c_shared, versions[i].name);
-        run("%s %s -I targets/node-%s/include/node", cpp_compiler, cpp_shared, versions[i].name);
+        run("%s %s %s -I simdutf -I targets/node-%s/include/node", cpp_compiler, cpp_shared, cxxflags, versions[i].name);
         run("%s -pthread" LINK_FLAGS " *.o uWebSockets/uSockets/boringssl/%s/libssl.a uWebSockets/uSockets/boringssl/%s/libcrypto.a uWebSockets/uSockets/lsquic/%s/src/liblsquic/liblsquic.a -std=c++20 -shared %s -o dist/uws_%s_%s_%s.node", cpp_compiler, arch, arch, arch, cpp_linker, os, arch, versions[i].abi);
     }
 }
@@ -153,10 +164,11 @@ void build_windows(char *compiler, char *cpp_compiler, char *cpp_linker, char *o
 
     char *c_shared = "-DWIN32_LEAN_AND_MEAN -DLIBUS_USE_LIBUV -DLIBUS_USE_QUIC -IuWebSockets/uSockets/lsquic/include -IuWebSockets/uSockets/lsquic/wincompat -IuWebSockets/uSockets/boringssl/include -DLIBUS_USE_OPENSSL -O3 -c -IuWebSockets/uSockets/src uWebSockets/uSockets/src/*.c uWebSockets/uSockets/src/eventing/*.c uWebSockets/uSockets/src/crypto/*.c";
     char *cpp_shared = "-DWIN32_LEAN_AND_MEAN -DUWS_WITH_PROXY -DUWS_REMOTE_ADDRESS_USERSPACE -DLIBUS_USE_LIBUV -DLIBUS_USE_QUIC -IuWebSockets/uSockets/lsquic/include -IuWebSockets/uSockets/lsquic/wincompat -IuWebSockets/uSockets/boringssl/include -DLIBUS_USE_OPENSSL -O3 -c -std=c++20 -IuWebSockets/uSockets/src -IuWebSockets/src src/addon.cpp uWebSockets/uSockets/src/crypto/sni_tree.cpp";
+    char *cxxflags = build_simdutf(cpp_compiler, "-O3");
 
     for (unsigned int i = 0; i < sizeof(versions) / sizeof(struct node_version); i++) {
         run("%s %s -Itargets/node-%s/include/node", compiler, c_shared, versions[i].name);
-        run("%s %s -Itargets/node-%s/include/node", cpp_compiler, cpp_shared, versions[i].name);
+        run("%s %s %s -Isimdutf -Itargets/node-%s/include/node", cpp_compiler, cpp_shared, cxxflags, versions[i].name);
         run("%s -O3 *.o uWebSockets/uSockets/boringssl/%s/ssl.lib uWebSockets/uSockets/boringssl/%s/crypto.lib uWebSockets/uSockets/lsquic/src/liblsquic/Debug/lsquic.lib targets/node-%s/node.lib -ladvapi32 -std=c++20 -shared -o dist/uws_win32_%s_%s.node", cpp_compiler, arch, arch, versions[i].name, arch, versions[i].abi);
     }
 }

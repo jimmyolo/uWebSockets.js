@@ -52,6 +52,25 @@ jobs:
           ls dist
           cd tests && npm install ws && node smoke.js && cd ..
           ls dist
+      - name: Checkout Source Tree
+        uses: actions/checkout@v6
+        with:
+          path: simdutf
+          submodules: recursive
+          persist-credentials: false
+      - name: Build binaries with simdutf
+        working-directory: simdutf
+        env:
+          CXXFLAGS: -DUWS_USE_SIMDUTF
+        run: |
+          ${{ matrix.os == 'windows-latest' && 'nmake' || 'make' }}
+          ls dist
+          cd tests && npm install ws && node smoke.js
+      - name: Upload simdutf binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: binaries-simdutf-${{ matrix.os }}
+          path: simdutf/dist/*
   #        git fetch origin binaries:binaries
   #        git checkout binaries
   #        cp dist/*.node .

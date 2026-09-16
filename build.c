@@ -33,14 +33,6 @@
 #define MACOS_LINK_EXTRAS ""
 #endif
 
-/* WITH_SIMDUTF: validate WebSocket text frames with simdutf instead of the built-in scalar check. */
-#define SIMDUTF_VERSION "v9.2.0"
-#ifdef WITH_SIMDUTF
-#define SIMDUTF_FLAGS " -DUWS_USE_SIMDUTF -I simdutf"
-#else
-#define SIMDUTF_FLAGS ""
-#endif
-
 const char *ARM = "arm";
 const char *ARM64 = "arm64";
 const char *X64 = "x64";
@@ -139,17 +131,18 @@ void build_boringssl(const char *arch) {
 void build(char *compiler, char *cpp_compiler, char *cpp_linker, char *os, const char *arch) {
 
     char *c_shared = "-DWIN32_LEAN_AND_MEAN -DLIBUS_USE_LIBUV -DLIBUS_USE_QUIC -I uWebSockets/uSockets/lsquic/include -I uWebSockets/uSockets/boringssl/include -pthread -DLIBUS_USE_OPENSSL" OPT_FLAGS " -c -fPIC -I uWebSockets/uSockets/src uWebSockets/uSockets/src/*.c uWebSockets/uSockets/src/eventing/*.c uWebSockets/uSockets/src/crypto/*.c";
-    char *cpp_shared = "-DWIN32_LEAN_AND_MEAN -DUWS_WITH_PROXY -DUWS_REMOTE_ADDRESS_USERSPACE -DLIBUS_USE_LIBUV -DLIBUS_USE_QUIC -I uWebSockets/uSockets/boringssl/include -pthread -DLIBUS_USE_OPENSSL" SIMDUTF_FLAGS OPT_FLAGS " -c -fPIC -std=c++20 -I uWebSockets/uSockets/src -I uWebSockets/src src/addon.cpp uWebSockets/uSockets/src/crypto/sni_tree.cpp";
+    char *cpp_shared = "-DWIN32_LEAN_AND_MEAN -DUWS_WITH_PROXY -DUWS_REMOTE_ADDRESS_USERSPACE -DLIBUS_USE_LIBUV -DLIBUS_USE_QUIC -I uWebSockets/uSockets/boringssl/include -pthread -DLIBUS_USE_OPENSSL" OPT_FLAGS " -c -fPIC -std=c++20 -I uWebSockets/uSockets/src -I uWebSockets/src src/addon.cpp uWebSockets/uSockets/src/crypto/sni_tree.cpp";
+    char *cxxflags = getenv("CXXFLAGS") ? getenv("CXXFLAGS") : "";
 
-#ifdef WITH_SIMDUTF
-    /* The linker picks simdutf.o up through *.o */
-    run("mkdir -p simdutf && curl -fL -o simdutf/simdutf.h https://github.com/simdutf/simdutf/releases/download/" SIMDUTF_VERSION "/simdutf.h && curl -fL -o simdutf/simdutf.cpp https://github.com/simdutf/simdutf/releases/download/" SIMDUTF_VERSION "/simdutf.cpp");
-    run("%s" OPT_FLAGS " -c -fPIC -std=c++20 simdutf/simdutf.cpp", cpp_compiler);
-#endif
+    /* UWS_USE_SIMDUTF needs simdutf; simdutf.o is linked through *.o */
+    if (strstr(cxxflags, "UWS_USE_SIMDUTF")) {
+        run("mkdir -p simdutf && curl -fL -o simdutf/simdutf.h https://github.com/simdutf/simdutf/releases/download/v9.2.0/simdutf.h && curl -fL -o simdutf/simdutf.cpp https://github.com/simdutf/simdutf/releases/download/v9.2.0/simdutf.cpp");
+        run("%s" OPT_FLAGS " -c -fPIC -std=c++20 simdutf/simdutf.cpp", cpp_compiler);
+    }
 
     for (unsigned int i = 0; i < sizeof(versions) / sizeof(struct node_version); i++) {
         run("%s %s -I targets/node-%s/include/node", compiler, c_shared, versions[i].name);
-        run("%s %s -I targets/node-%s/include/node", cpp_compiler, cpp_shared, versions[i].name);
+        run("%s %s %s -I simdutf -I targets/node-%s/include/node", cpp_compiler, cpp_shared, cxxflags, versions[i].name);
         run("%s -pthread" LINK_FLAGS " *.o uWebSockets/uSockets/boringssl/%s/libssl.a uWebSockets/uSockets/boringssl/%s/libcrypto.a uWebSockets/uSockets/lsquic/%s/src/liblsquic/liblsquic.a -std=c++20 -shared %s -o dist/uws_%s_%s_%s.node", cpp_compiler, arch, arch, arch, cpp_linker, os, arch, versions[i].abi);
     }
 }

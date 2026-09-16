@@ -2,6 +2,8 @@ name: Build
 on:
   push:
     branches: [ master, alma9-v2 ]
+  # Manual runs build this repo instead of upstream, with simdutf on Linux
+  workflow_dispatch:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -45,13 +47,21 @@ jobs:
         with:
           node-version: 26
       - name: Update binaries
+        env:
+          CXXFLAGS: ${{ github.event_name == 'workflow_dispatch' && contains(matrix.os, 'ubuntu') && '-DUWS_USE_SIMDUTF' || '' }}
         run: |
-          git clone --recursive https://github.com/uNetworking/uWebSockets.js.git
+          git clone --recursive ${{ github.event_name == 'workflow_dispatch' && format('-b {0} {1}/{2}.git', github.ref_name, github.server_url, github.repository) || 'https://github.com/uNetworking/uWebSockets.js.git' }} uWebSockets.js
           cd uWebSockets.js
           ${{ matrix.os == 'windows-latest' && 'nmake' || 'make' }}
           ls dist
           cd tests && npm install ws && node smoke.js && cd ..
           ls dist
+      - name: Upload simdutf binaries
+        if: github.event_name == 'workflow_dispatch' && contains(matrix.os, 'ubuntu')
+        uses: actions/upload-artifact@v7
+        with:
+          name: binaries-simdutf-${{ matrix.os }}
+          path: uWebSockets.js/dist/*
   #        git fetch origin binaries:binaries
   #        git checkout binaries
   #        cp dist/*.node .

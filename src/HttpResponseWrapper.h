@@ -44,8 +44,8 @@ struct HttpResponseWrapper {
         if constexpr (PROTOCOL == 2) {
             return (uWS::Http3Response *) res;
         } else if constexpr (PROTOCOL == 3) {
-            //return (uWS::CachingHttpResponse *) res; // is correct
-            return (uWS::HttpResponse<PROTOCOL != 0> *) res; // not correct
+            return (uWS::HttpCacheResponse *) res; // is correct
+            //return (uWS::HttpResponse<PROTOCOL != 0> *) res; // not correct
         } else {
             return (uWS::HttpResponse<PROTOCOL != 0> *) res;
         }
@@ -589,13 +589,17 @@ struct HttpResponseWrapper {
         } else if (SSL == 2) {
             resTemplateLocal->SetClassName(String::NewFromUtf8(isolate, "uWS.Http3Response", NewStringType::kNormal).ToLocalChecked());
         } else if (SSL == 3) {
-            resTemplateLocal->SetClassName(String::NewFromUtf8(isolate, "uWS.CachedHttpResponse", NewStringType::kNormal).ToLocalChecked());
+            resTemplateLocal->SetClassName(String::NewFromUtf8(isolate, "uWS.HttpCacheResponse", NewStringType::kNormal).ToLocalChecked());
         }
         resTemplateLocal->InstanceTemplate()->SetInternalFieldCount(1);
 
-        /* Register our functions */
+        /* Register our functions (the most common go here) */
         resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "end", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_end<SSL>));
-        
+        resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "onAborted", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_onAborted<SSL>));
+        if constexpr (SSL != 2) {
+            resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "cork", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_cork<SSL>));
+        }
+
         /* Cache has almost nothing wrapped yet */
         if constexpr (SSL != 3) {
             resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "writeStatus", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_writeStatus<SSL>));
@@ -605,7 +609,6 @@ struct HttpResponseWrapper {
             resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "writeHeader", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_writeHeader<SSL>));
             resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "close", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_close<SSL>));
             resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "onWritable", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_onWritable<SSL>));
-            resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "onAborted", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_onAborted<SSL>));
             resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "onData", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_onData<SSL>));
             
             /* QUIC has a lot of functions unimplemented */
@@ -615,7 +618,7 @@ struct HttpResponseWrapper {
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "getWriteOffset", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_getWriteOffset<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "beginWrite", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_beginWrite<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "getRemoteAddress", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_getRemoteAddress<SSL>));
-                resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "cork", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_cork<SSL>));
+                //resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "cork", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_cork<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "collect", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_cork<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "upgrade", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_upgrade<SSL>));
                 resTemplateLocal->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "getRemoteAddressAsText", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, res_getRemoteAddressAsText<SSL>));

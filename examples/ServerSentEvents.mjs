@@ -1,7 +1,7 @@
 /* Server-sent events (EventSource) example */
 /* curl -n localhost:9001 # check events by using curl */
 
-const uWS = require('../dist/uws.js');
+import uWS from '../dist/uws.js';
 const port = 9001;
 
 const headers = [
@@ -31,7 +31,10 @@ const app = uWS./*SSL*/App({
   res.writeStatus('200 OK')
 
   let intervalRef = setInterval(() => {
-    res.write(serializeData({ message: 'Hello world!' }))
+    /* Writes made outside of a uWS callback, like from a timer, must be corked */
+    res.cork(() => {
+      res.write(serializeData({ message: 'Hello world!' }))
+    })
   }, 1000)
 
   res.onAborted(() => {

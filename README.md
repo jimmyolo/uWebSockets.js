@@ -8,7 +8,7 @@
 <br>
 
 ### :zap: Simple performance
-µWebSockets.js is a standards compliant web server written in 10,000 lines of C++. It is exposed to Node.js as a simple-to-use, native V8 addon and has significantly outperformed all alternatives for Node.js during the past decade. Since v0.0.76, Bun has implemented their event-loop, TLS, HTTP, QUIC, WebSockets & URL routing via [their fork of uWS](https://github.com/oven-sh/bun/releases/tag/bun-v0.0.76). That's why uWS.js and Bun perform about the same in [benchmarks](https://http-arena.com).
+µWebSockets.js is a standards-compliant web server written in 10,000 lines of C++. It is exposed to Node.js as a simple-to-use, native V8 addon and has significantly (5-10x) outperformed everything based on `node:net` (think Fastify, ws) since 2016. Since 2022 a fork of µWS has carried Bun to the top of benchmarks, and is responsible for its event-loop, TLS, HTTP, QUIC, WebSockets, pub/sub, and URL routing<sup>[[4]](https://github.com/oven-sh/bun/tree/main/packages/bun-uws/src)</sup><sup>[[5]](https://github.com/oven-sh/bun/tree/main/packages/bun-usockets/src)</sup>. For this reason [uWS.js performs similar to Bun](https://http-arena.com), while being far more stable & conservative about fuzzing, security and sanitization.
 
 We aren't in the NPM registry but you can easily install it with the NPM client:
 * `npm install uNetworking/uWebSockets.js#v20.70.0`

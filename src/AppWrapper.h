@@ -934,13 +934,47 @@ void uWS_App(const FunctionCallbackInfo<Value> &args) {
     /* All the http methods */
     appTemplate->PrototypeTemplate()->Set(String::NewFromUtf8(isolate, "get", NewStringType::kNormal).ToLocalChecked(), FunctionTemplate::New(isolate, [](auto &args) {
         
-        /* Add non-cached variants */
+        /* Is this non-SSL? */
         if constexpr (std::is_same<APP, uWS::App>::value) {
 
+            /* Did we get 3 arguments (cached registry)? */
             if (args.Length() == 3) {
-                /* Use cached variant */
-                std::cout << "Registering cached get handler" << std::endl;
 
+
+                /* Grab the cache arguments */
+                v8::Isolate* isolate = args.GetIsolate();
+                v8::Local<v8::Context> context = isolate->GetCurrentContext();
+
+                // 1. Ensure args[2] is an Object
+                if (!args[2]->IsObject()) {
+                    isolate->ThrowException(v8::Exception::TypeError(
+                        v8::String::NewFromUtf8(isolate, "Cache options must be an object").ToLocalChecked()));
+                    return;
+                }
+
+                v8::Local<v8::Object> optionsObj = args[2].template As<v8::Object>();
+
+                // 2. Create V8 strings for the property names
+                v8::Local<v8::String> lowerKey = v8::String::NewFromUtf8(isolate, "lowerExpiry").ToLocalChecked();
+                v8::Local<v8::String> upperKey = v8::String::NewFromUtf8(isolate, "upperExpiry").ToLocalChecked();
+
+                // 3. Extract properties safely with defaults if missing
+                v8::Local<v8::Value> lowerVal;
+                v8::Local<v8::Value> upperVal;
+
+                unsigned int lowerExpiry = 0;
+                unsigned int upperExpiry = 0;
+
+                if (optionsObj->Get(context, lowerKey).ToLocal(&lowerVal) && lowerVal->IsNumber()) {
+                    lowerExpiry = lowerVal->Uint32Value(context).ToChecked();
+                }
+
+                if (optionsObj->Get(context, upperKey).ToLocal(&upperVal) && upperVal->IsNumber()) {
+                    upperExpiry = upperVal->Uint32Value(context).ToChecked();
+                }
+
+
+                std::cout << "lowerExpiry = " << lowerExpiry << ", upperExpiry = " << upperExpiry << std::endl;
 
                 APP *app = (APP *) getInternalPointer(args.This());//->GetAlignedPointerFromInternalField(0);
 
@@ -983,17 +1017,26 @@ void uWS_App(const FunctionCallbackInfo<Value> &args) {
 
                     /* µWS itself will terminate if not responded and not attached
                     * onAborted handler, so we can assume it's done */
-                }/*, 13*/);
+                }, {
+                    .lowerExpiry = lowerExpiry,
+                    .upperExpiry = upperExpiry
+                });
 
                 args.GetReturnValue().Set(args.This());
 
 
             } else {
-                uWS_App_get<APP>(&uWS::TemplatedApp<false>::get, args);
+                /* This is non-SSL but not using cache */
+                //uWS_App_get<APP>(&uWS::TemplatedApp<false>::get, args);
+
+                uWS_App_get<APP>(static_cast<APP && (APP::*)(std::string, uWS::MoveOnlyFunction<void(uWS::HttpResponse<false> *, uWS::HttpRequest *)> &&)>(&APP::get), args);
             }
 
         } else if constexpr (std::is_same<APP, uWS::SSLApp>::value) {
-            uWS_App_get<APP>(&uWS::TemplatedApp<true>::get, args);
+            /* This is SSL and not using cache */
+            //uWS_App_get<APP>(&uWS::TemplatedApp<true>::get, args);
+
+            uWS_App_get<APP>(static_cast<APP && (APP::*)(std::string, uWS::MoveOnlyFunction<void(uWS::HttpResponse<true> *, uWS::HttpRequest *)> &&)>(&APP::get), args);
         }
        
     }, args.Data()));
